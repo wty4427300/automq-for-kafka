@@ -156,6 +156,10 @@ class SharedServer(
     }
   }
 
+  def createTelemetryManager(config: KafkaConfig, clusterId: String): TelemetryManager = {
+    new TelemetryManager(config, clusterId)
+  }
+
   /**
    * The fault handler to use when metadata loading fails.
    */
@@ -222,7 +226,7 @@ class SharedServer(
         if (sharedServerConfig.processRoles.contains(ControllerRole)) {
           controllerMetrics = new QuorumControllerMetrics(KafkaYammerMetrics.defaultRegistry(), time)
         }
-        telemetryManager = new TelemetryManager(sharedServerConfig, metaProps.clusterId)
+        telemetryManager = createTelemetryManager(sharedServerConfig, metaProps.clusterId)
         raftManager = new KafkaRaftManager[ApiMessageAndVersion](
           metaProps,
           sharedServerConfig,
