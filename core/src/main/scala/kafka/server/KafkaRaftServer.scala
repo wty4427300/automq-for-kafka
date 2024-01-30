@@ -25,13 +25,16 @@ import kafka.server.KafkaRaftServer.{BrokerRole, ControllerRole}
 import kafka.utils.{CoreUtils, Logging, Mx4jLoader, VerifiableProperties}
 import org.apache.kafka.common.config.{ConfigDef, ConfigResource}
 import org.apache.kafka.common.internals.Topic
+import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.utils.{AppInfoParser, Time}
 import org.apache.kafka.common.{KafkaException, Uuid}
 import org.apache.kafka.metadata.bootstrap.{BootstrapDirectory, BootstrapMetadata}
 import org.apache.kafka.metadata.KafkaConfigSchema
 import org.apache.kafka.raft.RaftConfig
+import org.apache.kafka.raft.RaftConfig.AddressSpec
 import org.apache.kafka.server.metrics.KafkaYammerMetrics
 
+import java.util
 import java.util.Optional
 import scala.collection.Seq
 import scala.jdk.CollectionConverters._
@@ -64,15 +67,8 @@ class KafkaRaftServer(
   private val controllerQuorumVotersFuture = CompletableFuture.completedFuture(
     RaftConfig.parseVoterConnections(config.quorumVoters))
 
-  val sharedServer = new SharedServer(
-    config,
-    metaProps,
-    time,
-    metrics,
-    threadNamePrefix,
-    controllerQuorumVotersFuture,
-    new StandardFaultHandlerFactory(),
-  )
+  val sharedServer = createSharedServer(config, metaProps, time, metrics, threadNamePrefix, controllerQuorumVotersFuture,
+    new StandardFaultHandlerFactory())
 
   private val broker: Option[BrokerServer] = if (config.processRoles.contains(BrokerRole)) {
     Some(brokerServer())
@@ -109,6 +105,21 @@ class KafkaRaftServer(
   }
 
   // AutoMQ for Kafka inject start
+  protected def createSharedServer(config: KafkaConfig, metaProps: MetaProperties, time: Time, metrics: Metrics,
+                                   threadNamePrefix: Option[String],
+                                   controllerQuorumVotersFuture: CompletableFuture[util.Map[Integer, AddressSpec]],
+                                   faultHandlerFactory: FaultHandlerFactory): SharedServer = {
+    new SharedServer(
+      config,
+      metaProps,
+      time,
+      metrics,
+      threadNamePrefix,
+      controllerQuorumVotersFuture,
+      faultHandlerFactory,
+    )
+  }
+
   protected def brokerServer(): BrokerServer = {
     new BrokerServer(
       sharedServer,
