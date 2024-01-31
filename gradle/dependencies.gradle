@@ -229,7 +229,7 @@ libs += [
   zstd: "com.github.luben:zstd-jni:$versions.zstd",
   httpclient: "org.apache.httpcomponents:httpclient:$versions.httpclient",
   commonLang: "org.apache.commons:commons-lang3:$versions.commonLang",
-  commonio          : "commons-io:commons-io:$versions.commonio",
+  commonio: "commons-io:commons-io:$versions.commonio",
   commonMath3: "org.apache.commons:commons-math3:$versions.commonMath3",
   nettyHttp2: "io.netty:netty-codec-http2:$versions.netty",
   awsSdkAuth: "software.amazon.awssdk:auth:$versions.awsSdkAuth",

@@ -56,6 +56,8 @@ import io.opentelemetry.semconv.ResourceAttributes;
 import kafka.server.KafkaConfig;
 import kafka.server.KafkaRaftServer;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.kafka.common.Reconfigurable;
+import org.apache.kafka.common.config.ConfigException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.bridge.SLF4JBridgeHandler;
@@ -64,28 +66,40 @@ import scala.collection.immutable.Set;
 import java.io.InputStream;
 import java.time.Duration;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 
-public class TelemetryManager {
-    public static final Logger LOGGER = LoggerFactory.getLogger(TelemetryManager.class);
-    public static final Integer EXPORTER_TIMEOUT_MS = 5000;
+public class TelemetryManager implements Reconfigurable {
+    private static final Logger LOGGER = LoggerFactory.getLogger(TelemetryManager.class);
+    private static final Integer EXPORTER_TIMEOUT_MS = 5000;
     private static java.util.logging.Logger metricsLogger;
-    protected static OpenTelemetrySdk openTelemetrySdk;
-    protected static boolean traceEnable = false;
-    protected final String clusterId;
+    private static OpenTelemetrySdk openTelemetrySdk;
+    private static boolean traceEnable = false;
+    private final String clusterId;
 
     public TelemetryManager(KafkaConfig kafkaConfig, String clusterId) {
         this.clusterId = clusterId;
         init(kafkaConfig);
     }
 
+    private String getNodeType(Set<KafkaRaftServer.ProcessRole> roles) {
+        if (roles.size() == 1) {
+            return roles.last().toString();
+        }
+        return "server";
+    }
+
     public static boolean isTraceEnable() {
         return traceEnable;
     }
 
-    protected void init(KafkaConfig kafkaConfig) {
+    public static OpenTelemetrySdk getOpenTelemetrySdk() {
+        return openTelemetrySdk;
+    }
+
+    private void init(KafkaConfig kafkaConfig) {
         String nodeType = getNodeType(kafkaConfig.processRoles());
 
         Attributes baseAttributes = Attributes.builder()
@@ -134,19 +148,8 @@ public class TelemetryManager {
                 kafkaConfig.s3MetricsEnable(), kafkaConfig.s3MetricsLevel(), kafkaConfig.s3TracerEnable(), kafkaConfig.s3ExporterReportIntervalMs());
     }
 
-    protected String getNodeType(Set<KafkaRaftServer.ProcessRole> roles) {
-        if (roles.size() == 1) {
-            return roles.last().toString();
-        }
-        return "server";
-    }
-
-    public static OpenTelemetrySdk getOpenTelemetrySdk() {
-        return openTelemetrySdk;
-    }
-
-    protected void addJmxMetrics(OpenTelemetry ot, long discoveryDelay, Set<KafkaRaftServer.ProcessRole> roles) {
-        JmxMetricInsight jmxMetricInsight = JmxMetricInsight.createService(ot, discoveryDelay);
+    private void addJmxMetrics(OpenTelemetry ot, long delayTimeMs, Set<KafkaRaftServer.ProcessRole> roles) {
+        JmxMetricInsight jmxMetricInsight = JmxMetricInsight.createService(ot, delayTimeMs);
         MetricConfiguration conf = new MetricConfiguration();
 
         if (roles.contains(KafkaRaftServer.BrokerRole$.MODULE$)) {
@@ -167,7 +170,7 @@ public class TelemetryManager {
         }
     }
 
-    protected void addJvmMetrics() {
+    private void addJvmMetrics() {
         // set JVM metrics opt-in to prevent metrics conflict.
         System.setProperty("otel.semconv-stability.opt-in", "jvm");
         // JVM metrics
@@ -176,7 +179,7 @@ public class TelemetryManager {
         GarbageCollector.registerObservers(openTelemetrySdk);
     }
 
-    protected MetricsLevel metricsLevel(String levelStr) {
+    private MetricsLevel metricsLevel(String levelStr) {
         if (StringUtils.isBlank(levelStr)) {
             return MetricsLevel.INFO;
         }
@@ -189,7 +192,7 @@ public class TelemetryManager {
         }
     }
 
-    protected SdkTracerProvider getTraceProvider(KafkaConfig kafkaConfig, Resource resource) {
+    private SdkTracerProvider getTraceProvider(KafkaConfig kafkaConfig, Resource resource) {
         Optional<String> otlpEndpointOpt = getOTLPEndpoint(kafkaConfig.s3TraceExporterOTLPEndpoint());
         if (otlpEndpointOpt.isEmpty()) {
             otlpEndpointOpt = getOTLPEndpoint(kafkaConfig.s3ExporterOTLPEndpoint());
@@ -217,7 +220,7 @@ public class TelemetryManager {
                 .build();
     }
 
-    protected SdkMeterProvider getMetricsProvider(KafkaConfig kafkaConfig, Resource resource) {
+    private SdkMeterProvider getMetricsProvider(KafkaConfig kafkaConfig, Resource resource) {
         SdkMeterProviderBuilder sdkMeterProviderBuilder = SdkMeterProvider.builder().setResource(resource);
         String exporterTypes = kafkaConfig.s3MetricsExporterType();
         if (StringUtils.isBlank(exporterTypes)) {
@@ -245,7 +248,7 @@ public class TelemetryManager {
         return sdkMeterProviderBuilder.build();
     }
 
-    protected void initOTLPExporter(SdkMeterProviderBuilder sdkMeterProviderBuilder, KafkaConfig kafkaConfig) {
+    private void initOTLPExporter(SdkMeterProviderBuilder sdkMeterProviderBuilder, KafkaConfig kafkaConfig) {
         Optional<String> otlpExporterHostOpt = getOTLPEndpoint(kafkaConfig.s3ExporterOTLPEndpoint());
         if (otlpExporterHostOpt.isEmpty()) {
             LOGGER.error("No valid OTLP endpoint found for metrics");
@@ -283,7 +286,7 @@ public class TelemetryManager {
         LOGGER.info("OTLP exporter registered, endpoint: {}, protocol: {}", otlpExporterHost, protocol);
     }
 
-    protected void initLogExporter(SdkMeterProviderBuilder sdkMeterProviderBuilder, KafkaConfig kafkaConfig) {
+    private void initLogExporter(SdkMeterProviderBuilder sdkMeterProviderBuilder, KafkaConfig kafkaConfig) {
         SLF4JBridgeHandler.removeHandlersForRootLogger();
         SLF4JBridgeHandler.install();
         MetricReader periodicReader = PeriodicMetricReader.builder(LoggingMetricExporter.create(AggregationTemporality.DELTA))
@@ -295,7 +298,7 @@ public class TelemetryManager {
         LOGGER.info("Log exporter registered");
     }
 
-    protected void initPrometheusExporter(SdkMeterProviderBuilder sdkMeterProviderBuilder, KafkaConfig kafkaConfig) {
+    private void initPrometheusExporter(SdkMeterProviderBuilder sdkMeterProviderBuilder, KafkaConfig kafkaConfig) {
         String promExporterHost = kafkaConfig.s3MetricsExporterPromHost();
         int promExporterPort = kafkaConfig.s3MetricsExporterPromPort();
         if (StringUtils.isBlank(promExporterHost) || promExporterPort <= 0) {
@@ -309,7 +312,7 @@ public class TelemetryManager {
         LOGGER.info("Prometheus exporter registered, host: {}, port: {}", promExporterHost, promExporterPort);
     }
 
-    protected Optional<String> getOTLPEndpoint(String endpoint) {
+    private Optional<String> getOTLPEndpoint(String endpoint) {
         if (StringUtils.isBlank(endpoint)) {
             return Optional.empty();
         }
@@ -323,5 +326,43 @@ public class TelemetryManager {
         if (openTelemetrySdk != null) {
             openTelemetrySdk.close();
         }
+        LOGGER.info("TelemetryManager shutdown");
+    }
+
+    @Override
+    public void configure(Map<String, ?> configs) {
+        // do nothing
+    }
+
+    @Override
+    public java.util.Set<String> reconfigurableConfigs() {
+        return java.util.Set.of(
+                KafkaConfig.S3MetricsEnableProp(),
+                KafkaConfig.S3TracerEnableProp(),
+                KafkaConfig.S3ExporterOTLPEndpointProp(),
+                KafkaConfig.S3ExporterOTLPProtocolProp(),
+                KafkaConfig.S3ExporterOTLPCompressionEnableProp(),
+                KafkaConfig.S3TraceExporterOTLPEndpointProp(),
+                KafkaConfig.S3ExporterReportIntervalMsProp(),
+                KafkaConfig.S3MetricsLevelProp(),
+                KafkaConfig.S3MetricsExporterTypeProp(),
+                KafkaConfig.S3MetricsExporterPromHostProp(),
+                KafkaConfig.S3MetricsExporterPromPortProp());
+    }
+
+    @Override
+    public void validateReconfiguration(Map<String, ?> configs) throws ConfigException {
+        // do nothing
+        LOGGER.info("validateReconfiguration");
+    }
+
+    // KNOWN ISSUE: Due to the absence of shutdown procedures in JmxMetricInsight,
+    // every reconfiguration will lead to dangling objects. This issue will be resolved once
+    // JmxMetricInsight becomes closable.
+    @Override
+    public void reconfigure(Map<String, ?> configs) {
+        LOGGER.info("reconfigured");
+        shutdown();
+        init(new KafkaConfig(configs));
     }
 }

@@ -227,6 +227,7 @@ class SharedServer(
           controllerMetrics = new QuorumControllerMetrics(KafkaYammerMetrics.defaultRegistry(), time)
         }
         telemetryManager = createTelemetryManager(sharedServerConfig, metaProps.clusterId)
+        sharedServerConfig.dynamicConfig.addReconfigurable(telemetryManager)
         raftManager = new KafkaRaftManager[ApiMessageAndVersion](
           metaProps,
           sharedServerConfig,
